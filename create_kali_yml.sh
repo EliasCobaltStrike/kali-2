@@ -2,42 +2,52 @@
 
 set -e
 
-echo "Erstelle Dockerfile..."
+echo "==> Erstelle Dockerfile für Kali Linux Desktop mit XFCE und noVNC..."
+
 cat > Dockerfile <<'EOF'
 FROM kalilinux/kali-rolling
 
-# Umgebung auf Deutsch einstellen
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=de_DE.UTF-8
 ENV LC_ALL=de_DE.UTF-8
 
-# Update und Installation aller benötigten Pakete
-RUN apt-get update && apt-get upgrade -y && apt-get dist-upgrade -y && apt-get install -y --no-install-recommends \
-    xfce4 xfce4-goodies x11vnc xvfb novnc supervisor curl ca-certificates locales && \
+# Kali mirror setzen (vertrauenswürdiger und schnell)
+RUN echo "deb http://http.kali.org/kali kali-rolling main non-free contrib" > /etc/apt/sources.list
+
+# CA Zertifikate und SSL-Probleme fixen, apt immer updaten, Update erzwingen
+RUN apt-get clean && \
+    apt-get update --allow-insecure-repositories --allow-unauthenticated || true && \
+    apt-get install -y --no-install-recommends ca-certificates apt-transport-https curl gnupg && \
+    update-ca-certificates --fresh && \
+    apt-get update --fix-missing && \
+    apt-get upgrade -y --fix-missing && \
+    apt-get dist-upgrade -y --fix-missing
+
+# Pakete installieren - XFCE Desktop, noVNC, Supervisor etc.
+RUN apt-get install -y --no-install-recommends \
+    xfce4 xfce4-goodies x11vnc xvfb novnc supervisor curl locales && \
     locale-gen de_DE.UTF-8 && update-locale LANG=de_DE.UTF-8 && \
-    update-ca-certificates && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# noVNC herunterladen und konfigurieren
+# noVNC manuell herunterladen und entpacken
 RUN mkdir -p /opt/novnc && \
     curl -L https://github.com/novnc/noVNC/archive/refs/tags/v1.4.0.tar.gz | tar -xzf - -C /opt/novnc --strip-components=1 && \
     curl -L https://github.com/novnc/websockify/archive/refs/tags/v0.11.0.tar.gz | tar -xzf - -C /opt/novnc/utils --strip-components=1 && \
     chmod +x /opt/novnc/utils/novnc_proxy
 
-# Kali User anlegen mit Passwort "kali"
+# Benutzer kali anlegen mit Passwort kali
 RUN useradd -m -s /bin/bash kali && echo "kali:kali" | chpasswd && adduser kali sudo
 
-# Supervisord Konfigurationsdatei einbinden
+# Supervisor Config hinzufügen
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Ports für VNC und noVNC freigeben
 EXPOSE 5900 6080
 
-# Supervisord starten, damit alle Dienste laufen
 CMD ["/usr/bin/supervisord", "-n"]
 EOF
 
-echo "Erstelle Supervisord-Konfiguration..."
+echo "==> Erstelle Supervisord-Konfiguration..."
+
 cat > supervisord.conf <<'EOF'
 [supervisord]
 nodaemon=true
@@ -64,7 +74,8 @@ stdout_logfile=/var/log/novnc.log
 stderr_logfile=/var/log/novnc.err.log
 EOF
 
-echo "Erstelle docker-compose.yml..."
+echo "==> Erstelle docker-compose.yml..."
+
 cat > docker-compose.yml <<'EOF'
 version: "3.8"
 
@@ -79,8 +90,8 @@ services:
     tty: true
 EOF
 
-echo "Baue das Docker-Image..."
+echo "==> Baue Docker-Image..."
 docker compose build
 
-echo "Starte den Container..."
+echo "==> Starte Container..."
 docker compose up
